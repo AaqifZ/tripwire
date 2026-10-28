@@ -12,19 +12,8 @@ import TripwireCore
 /// can see, and today's results. It never shows a key count: that would be a target to game.
 /// No Quit item on purpose: this process is tripwire, and quitting it would be a one-click off switch.
 enum MenuBar {
-    struct State {
-        var blockEnd: Date?
-        var site: String?
-        var secondsLeft: Double?
-        var safe = false
-        var writing = false
-        /// nil in test mode: a trip blocks nothing.
-        var blockMinutes: Int?
-        var blindSince: Date?
-        var blindBrowser: String?
-        var watchingBrowser: String?
-        var today = EventLog.Counts()
-    }
+    typealias State = Presentation.State
+    typealias Look = Presentation.Look
 
     private static var item: NSStatusItem?
     private static var lastSymbol = ""
@@ -39,44 +28,8 @@ enum MenuBar {
     static let buttonFont = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
     /// What the item and its menu show for one state. Pure, so `tripwire snapshot` can draw it too.
-    struct Look {
-        var symbol = "hourglass", title = ""
-        var headline: String?, detail: String?, health: String?
-        var today = ""
-    }
-
     static func look(_ s: State, now: Date = Date()) -> Look {
-        let time = { (d: Date) in d.formatted(date: .omitted, time: .shortened) }
-        var l = Look()
-
-        if let end = s.blockEnd, end > now {
-            let minutes = Int(ceil(end.timeIntervalSince(now) / 60))
-            l.symbol = "lock.fill"
-            l.title = minutes >= 60 ? " \(minutes / 60)h \(minutes % 60)m" : " \(minutes)m"
-            (l.headline, l.detail) = ("Blocked until \(time(end))", siteNames)
-        } else if let left = s.secondsLeft {
-            let seconds = Int(ceil(left))
-            let clock = String(format: "%d:%02d", seconds / 60, seconds % 60)
-            let site = s.site ?? "Watched site"
-            l.symbol = s.safe || s.writing ? "pencil" : "hourglass"
-            l.title = " " + clock
-            if s.writing {
-                l.headline = "\(site) · clock paused while you write"
-            } else if s.safe {
-                l.headline = "\(site) · this window will pass"
-            } else {
-                (l.headline, l.detail) = ("\(site) · block in \(clock)",
-                         s.blockMinutes.map { "Then: all 4 sites blocked for \($0) min" } ?? "Then: a trip is logged (test mode, no block)")
-            }
-        } else if let since = s.blindSince {
-            l.symbol = "exclamationmark.triangle"
-            (l.headline, l.detail) = ("⚠︎ Can't read \(s.blindBrowser ?? "the browser")'s tab since \(time(since))",
-                     "Tripwire is not counting. Run: tripwire status")
-        }
-        l.health = s.blindSince != nil ? nil
-            : s.watchingBrowser.map { "✓ Watching \($0)" } ?? "Watching \(siteNames)"
-        l.today = "Today: " + s.today.summary
-        return l
+        Presentation.look(s, now: now)
     }
 
     static func show(_ s: State) {

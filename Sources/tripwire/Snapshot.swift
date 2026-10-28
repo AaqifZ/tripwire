@@ -20,6 +20,10 @@ enum Snapshot {
             ("writing", .init(site: "linkedin.com", secondsLeft: 131, writing: true, blockMinutes: 90, watchingBrowser: "Brave", today: today)),
             ("block", .init(blockEnd: now.addingTimeInterval(87 * 60 - 1), watchingBrowser: "Brave",
                             today: .init(trips: 1, passes: 2))),
+            ("blind", .init(site: "x.com", secondsLeft: 131, blindSince: now, blindBrowser: "Brave", today: today)),
+            ("pending", .init(site: "x.com", secondsLeft: 300, today: today,
+                              enforcementFailure: "SelfControl did not verify the block. Retry pending.")),
+            ("away", .init(site: "x.com", secondsLeft: 131, today: today, onSite: false)),
         ]
         for (name, state) in states {
             let look = MenuBar.look(state, now: now)

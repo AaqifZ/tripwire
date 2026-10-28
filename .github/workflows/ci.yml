@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build release binary
+        run: swift build -c release
+
+      - name: Run core self-test
+        run: swift run TripwireSelfTest
+
+      - name: Run installer transaction tests
+        run: scripts/tests/install-test.sh

@@ -8,7 +8,7 @@ public struct Rule {
         public var minKeys: Int
         public var awayResetSeconds: Double
         public var warnSeconds: Double
-        /// Writing (D17): at least `writingKeys` keys in the last `writingSeconds`, in any app.
+        /// Writing: at least `writingKeys` attributed on-site keys in the last `writingSeconds`.
         public var writingKeys: Int
         public var writingSeconds: Double
         /// Writing pauses the clock for this long at most, per window (D21).
@@ -43,7 +43,7 @@ public struct Rule {
     /// `pausedSeconds` of the window that just closed, for its log line (D18).
     public private(set) var lastPausedSeconds: Double = 0
     private var awaySeconds: Double = 0
-    /// Keys per tick over the last `writingSeconds`, on or off the site (D17).
+    /// Attributed on-site keys per tick over the last `writingSeconds`.
     private var recent: [(seconds: Double, keys: Int)] = []
     private var composing = false
 
@@ -77,7 +77,8 @@ public struct Rule {
     /// `composing` is true when the front tab is a post composer.
     public mutating func tick(seconds: Double, onWatchedSite: Bool, keys newKeys: Int, scrolls newScrolls: Int,
                               composing: Bool = false) -> Verdict {
-        recent.append((seconds, newKeys))
+        // Off-site input must never buy creation credit or a writing pause.
+        recent.append((seconds, onWatchedSite ? newKeys : 0))
         while recent.reduce(0, { $0 + $1.seconds }) > config.writingSeconds { recent.removeFirst() }
         self.composing = composing
         guard onWatchedSite else {
@@ -110,5 +111,13 @@ public struct Rule {
         keys = 0
         scrolls = 0
         awaySeconds = 0
+    }
+
+    /// Unknown activity preserves the window. It earns no time or creation credit.
+    /// Age writing evidence so a failed read cannot preserve a writing pause.
+    public mutating func hold(seconds: Double) {
+        composing = false
+        recent.append((max(0, seconds), 0))
+        while recent.reduce(0, { $0 + $1.seconds }) > config.writingSeconds { recent.removeFirst() }
     }
 }

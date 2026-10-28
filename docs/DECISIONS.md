@@ -27,7 +27,7 @@ Each design decision has an ID. The code refers to these IDs (for example `D12`)
   - Start: `selfcontrol-cli start --blocklist <file.selfcontrol> --enddate <ISO8601 UTC>`
   - Check: `selfcontrol-cli is-running` prints `YES` or `NO` on its last line.
   - Blocklist file: a plist with `HostBlacklist` (an array of domains) and `BlockAsWhitelist` = false.
-- **Password:** SelfControl asks for an admin password before its first block, to install its helper. Later blocks start with no dialog, so tripwire can start them unattended.
+- **Password:** SelfControl asks for an admin password at each block start. D26 removes the dialog.
 
 ## D6. Initial thresholds
 - **Decision:** Window = 5 minutes. Creation = 30 typed keys or more in the window. Block = 90 minutes.
@@ -118,3 +118,40 @@ Each design decision has an ID. The code refers to these IDs (for example `D12`)
 - **How:** `Keys.isTyping` reads the keycode class and the cmd and ctrl flags. A real post has many typing keys and passes, so the cap does not stop real writing.
 - **Privacy:** Tripwire reads the keycode only to sort navigation keys from typing. It stores no keycodes. It never reads the character.
 - **Not done:** j and k still count. They are letters, and tripwire cannot see if a text field has focus.
+
+## D22. Attribute input to its window (2026-10-26)
+- **Decision:** Resolve a scroll event's receiving window and process. Match its bounds to one browser script window.
+- **Why:** A background X window can scroll while Slack has focus. Foreground application checks miss that activity.
+- **Constraint:** Browser script IDs and WindowServer IDs are different. Bounds must identify one window. An ambiguous match is unknown.
+- **Privacy:** Retain event types, timestamps, and window identity in a bounded memory buffer. Retain no characters or window titles.
+- **Creation credit:** Credit only input attributed to the watched activity. Off-site typing no longer pauses the clock. This replaces that part of D17.
+- **Lease:** A short hover-scroll lease bridges gaps between scroll events. Recheck the leased browser window.
+
+## D23. A trip remains pending until the block is verified (2026-10-26)
+- **Decision:** Save pending enforcement atomically. Retry failed attempts with a bounded backoff.
+- **Proof:** SelfControl must report a blacklist with every required host and an adequate end time.
+- **Conflict:** An unrelated, short, or allowlist block is insufficient. The SelfControl CLI cannot extend an existing block.
+- **Time:** Fix the requested end time for retries. If that period expires before success, request a fresh full period.
+- **Responsiveness:** Run every SelfControl call off the main loop. Bound command time and output.
+
+## D24. Show unknown activity honestly (2026-10-26)
+- **Decision:** Detection and enforcement failures take precedence over countdowns.
+- **Unknown:** Preserve the current rule window. Advance neither watched time nor away reset. Credit no input.
+- **Why:** A failed browser read proves neither continued browsing nor departure. Guessing either can cause a false block or erase accumulated time.
+- **Time:** Use monotonic elapsed time. Exclude long sleep or suspension gaps.
+- **Existing protection:** Reset rule accounting while a verified watched-site block is active. A blocked error page cannot create another trip.
+- **Diagnostics:** A read-only probe reports matched domains, event counts, attribution source, and health. It starts no block.
+
+## D25. Install as a transaction (2026-10-26)
+- **Decision:** Validate arguments, build, stage, and sign before the service stops. Replace files with same-directory renames.
+- **Recovery:** Restore the previous installation after a failed update. Retain backups if recovery itself fails.
+- **Proof:** Require a fresh heartbeat and a live launchd PID. Verify detection separately with the installed probe.
+- **Tests:** Use mocked operating-system commands for installer failures. Run regression checks in macOS CI.
+## D26. A trip blocks with no dialog (2026-10-28)
+- **Problem:** SelfControl 4.0.2 asks for the admin password at each block start. A dialog gives the person in the trance a Cancel button, so the block failed at the one moment it matters.
+- **Decision:** A one-time root setup (`scripts/root-setup.sh`) lets a trip start the block as root. SelfControl's authorization rights have `allow-root`, so root starts show no dialog. SelfControl still blocks (D5).
+- **Least privilege:** The sudo rule allows one root-owned script, `/Library/Tripwire/tripwire-block`. It accepts only an end date within 95 minutes. It starts a root-owned copy of SelfControl with a root-owned site list.
+- **Why a copy:** `/Applications/SelfControl.app` is writable by the user. A rule on that path lets malware replace the binary and get root.
+- **Limit:** A process that runs as the user can start a 95-minute block of the watched sites. It cannot block other sites, extend a block, or run other commands as root.
+- **No fallback:** Without the rule, tripwire does not run the user-level CLI, because its dialog is a Cancel button. The trip stays pending and fails visibly. `tripwire status` shows `unattended blocks: NO`.
+- **Upkeep:** Run the setup again after a SelfControl update or a change to the site list.

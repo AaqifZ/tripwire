@@ -110,7 +110,7 @@ do {
     r = Rule()
     _ = feed(&r, seconds: 30, onSite: false, keysPerTick: 3)
     _ = feed(&r, seconds: 2, onSite: true)
-    check(r.isWriting && r.onSiteSeconds == 0, "typing in another app (a draft) pauses the clock on return")
+    check(!r.isWriting && r.onSiteSeconds == 2, "typing in another app never pauses the watched-site clock")
 
     r = Rule()
     _ = feed(&r, seconds: 120, onSite: true, composing: true)
@@ -211,6 +211,11 @@ check(Sites.blocklist.contains("www.instagram.com"), "blocklist has www variants
 check(Heartbeat.describe(age: nil).contains("NOT RUNNING"), "no heartbeat file: not running")
 check(Heartbeat.describe(age: 9).contains("ticking"), "a fresh beat: ticking")
 check(Heartbeat.describe(age: 31 * 60).contains("FROZEN"), "a 31 min old beat: frozen")
+let legacyRuntime = """
+{"version":"0.2.0","pid":42,"testMode":false,"updatedAt":0,"activity":"ok","enforcement":"ok"}
+""".data(using: .utf8)!
+check((try? JSONDecoder().decode(RuntimeHealth.self, from: legacyRuntime))?.attribution == nil,
+      "runtime health decodes legacy files without attribution")
 do {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tripwire-selftest-\(UUID())")
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -249,6 +254,10 @@ do {
     check(Detection.blindSince(stateDir: dir) == nil, "blind file is removed when clear")
     try? FileManager.default.removeItem(at: dir)
 }
+
+runActivityChecks()
+runEnforcementChecks()
+runPresentationChecks()
 
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")
 exit(failures == 0 ? 0 : 1)

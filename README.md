@@ -20,12 +20,12 @@ You also need [SelfControl](https://selfcontrolapp.com) and two macOS permission
 
 ## What it does
 
-- **Watches the front browser tab.** Once per second, tripwire reads the URL of the active tab in Brave, Chrome, Arc, or Safari.
+- **Watches the active browser window.** Once per second, tripwire reads the URL of the active tab in Brave, Chrome, Arc, or Safari.
 - **Counts typing.** A macOS event tap counts typed keys and scrolls. Space, arrows, page keys, and cmd or ctrl shortcuts do not count as typing.
 - **Trips on one rule.** 5 minutes on a watched site with fewer than 30 typed keys starts a block.
 - **Hands the block to SelfControl.** SelfControl blocks all four sites system-wide for 90 minutes. The block survives a restart.
 - **Warns without a dialog.** At minute 4, the whole screen turns gray. Type or leave the site, and the color comes back.
-- **Pauses while you write.** Fast typing in any app, or an open post composer, stops the clock. The pause lasts 3 minutes at most per window.
+- **Pauses while you write.** Attributed typing on a watched site, or an open post composer, pauses the clock. The pause lasts 3 minutes at most per window.
 - **Shows a countdown in the menu bar.** An hourglass shows the time left on a watched site. A lock shows the time left in a block. The menu has no Quit item.
 
 Watched sites: x.com (and twitter.com), linkedin.com, reddit.com, instagram.com.
@@ -51,7 +51,7 @@ Tripwire watches behavior instead. Doomscrolling has a clear signature: a lot of
 - Two macOS permissions for the tripwire binary:
   - **Input Monitoring**, to count keys and scrolls.
   - **Automation**, one grant per browser, to read the URL of the front tab.
-- An admin password, one time. SelfControl asks for it before its first block.
+- An admin password, one time, for `scripts/root-setup.sh`. Without that step, a trip cannot block.
 
 ### What the install script does
 
@@ -67,7 +67,8 @@ After the install:
 
 1. Turn on tripwire in System Settings > Privacy & Security > Input Monitoring. launchd restarts tripwire in about 30 seconds.
 2. Open a watched site in your browser. Click Allow when macOS asks if tripwire can control the browser.
-3. Run the install script again after each code change.
+3. Run `sudo scripts/root-setup.sh install` one time. A trip then starts its block with no password dialog. Run it again after a SelfControl update.
+4. Run the install script again after each code change.
 
 To try the rule without a real block, use test mode. The window is 30 seconds, the screen turns gray at 20 seconds, and a trip goes in the log with no block:
 
@@ -81,6 +82,7 @@ To remove tripwire:
 
 ```sh
 scripts/uninstall.sh
+sudo scripts/root-setup.sh remove
 ```
 
 The uninstall script stops tripwire and removes the LaunchAgent and the binary. It keeps `~/.tripwire` and the `tripwire-local` certificate. It does not stop a block that runs. To remove the certificate, delete `tripwire-local` in Keychain Access.
@@ -121,9 +123,9 @@ The output shows:
 
 ![How tripwire works. It reads the browser tab and counts keys and scrolls. When the rule trips, SelfControl blocks the sites](docs/img/architecture.png)
 
-1. Every second, tripwire reads the active tab URL from the browser in front. It asks that browser process by its PID, so a hidden copy of the same browser cannot answer for it.
+1. Tripwire reads the active browser tab and the browser window that receives a scroll event. It asks that browser process by its PID, so a hidden copy of the same browser cannot answer for it.
 2. If the URL is on a watched site, the 5 minute window clock runs.
-3. The event tap adds typed keys and scrolls to the window counts.
+3. The event tap adds input attributed to that window. Unrelated input receives no credit.
 4. At 4 minutes with fewer than 30 typed keys, the screen turns gray.
 5. At 5 minutes, tripwire gives a verdict. Fewer than 30 typed keys is a trip. Otherwise the window passes and a new one starts.
 6. On a trip, tripwire calls the SelfControl CLI to block all watched sites for 90 minutes.
@@ -132,11 +134,11 @@ If you leave the watched sites for 5 minutes, the window resets. Tripwire detect
 
 The code is one Swift package with no dependencies:
 
-- `Sources/TripwireCore`: the rule, site matching, the SelfControl call, and the logs. Pure logic, with tests.
+- `Sources/TripwireCore`: the rule, attribution model, enforcement state, process adapter, and logs.
 - `Sources/tripwire`: the daemon, the event tap, the tab reader, the gray screen, and the menu bar item.
 - `Sources/TripwireSelfTest`: the tests, as an executable. Run `swift run TripwireSelfTest`.
 
-[docs/DECISIONS.md](docs/DECISIONS.md) explains each design decision. The code refers to the decisions by ID (D1 to D21).
+[docs/DECISIONS.md](docs/DECISIONS.md) explains each design decision. The code refers to the decisions by ID (D1 to D25).
 
 ### Privacy
 
@@ -144,15 +146,15 @@ Tripwire runs on your Mac only. It makes no network calls of its own.
 
 What it reads, and keeps in memory only:
 
-- the URL of the front browser tab, once per second.
-- for each key press, the keycode and the cmd and ctrl flags. Tripwire uses them only to sort typing from navigation keys and shortcuts. It never reads the character.
-- scroll events, as a count.
+- the URL of a browser tab that is active or receives a scroll event.
+- the key class, destination process, event time, and scroll window ID. Tripwire uses these only to attribute input. It never reads the character or a window title.
+- a bounded in-memory event buffer. It discards the buffer after each observation.
 
 What it writes to `~/.tripwire`:
 
 - `events.log`: one line per window. The line has the time, the result (`pass`, `trip`, or `abandon`), the typed-key and scroll counts, the seconds with the clock paused, the watched domain, and whether a block started. A window left early also has its seconds on the site.
 - `tripwire.err`: the daemon log, with times. It records when you arrive on a watched domain, and the bundle ID of the front app when you leave the watched sites (for example `com.apple.Safari`). It also records writing pauses, trips, and detection errors.
-- Small state files: `heartbeat`, `blind`, `gray-on`, and `blocklist.selfcontrol`.
+- Small state files: `heartbeat`, `runtime.json`, `enforcement.json`, `blind`, `gray-on`, and `blocklist.selfcontrol`.
 
 Tripwire never stores characters, keycodes, page content, or full URLs. The logs are never deleted automatically. To remove them, delete `~/.tripwire`.
 
@@ -172,3 +174,36 @@ MIT. See [LICENSE](LICENSE).
 Tripwire uses [SelfControl](https://github.com/SelfControlApp/selfcontrol) for the block. SelfControl is a separate open-source app (GPL-3.0). Tripwire calls its CLI and does not include its code.
 
 Built with AI coding agents.
+
+
+## Reliability candidate: 0.2.1
+
+Background hover scroll selects the receiving browser window, even when another app has focus. When macOS omits the event-window ID, Tripwire requires the same frontmost window in the snapshots before and after the event. Browser windows still require a unique process and bounds match. Conflicting identity fails closed.
+
+Typing receives credit only after stable observations of the same watched window. Unrelated apps, function keys, media keys, and key repeat receive no credit. Unknown activity preserves the countdown without a verdict. The menu shows a detection failure.
+
+A trip remains pending across failed commands and daemon restarts. Tripwire verifies the block's domains and end time. An unrelated SelfControl block does not satisfy the trip. SelfControl cannot extend an existing block through its CLI, so a conflict remains visible until it can resolve.
+
+The installer stages and signs the candidate before it stops the service. It uses atomic file replacements and restores the previous installation after failure. It retains recovery files if rollback fails.
+
+To inspect attribution without a block or gray screen:
+
+```sh
+tripwire probe 15
+```
+
+To run the regression checks:
+
+```sh
+swift run TripwireSelfTest
+scripts/tests/install-test.sh
+```
+
+If a managed environment prevents SwiftPM's nested sandbox, use its explicit manifest option within the existing outer sandbox:
+
+```sh
+swift run --disable-sandbox TripwireSelfTest
+TRIPWIRE_SWIFTPM_DISABLE_SANDBOX=1 scripts/install.sh
+```
+
+This option does not grant LaunchAgent control or Input Monitoring access. Installed 0.2.1 passed the Slack-focused, background-X hover-scroll test. Firefox detection, transparent click-through overlays, browser API changes, and deliberate administrator bypass remain limitations.
